@@ -5,12 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
-from app.api import floors, waypoints, navigation, rooms
-from app.database import engine, Base
+from app.api import floors, waypoints, navigation, rooms, kiosks
 from app.core.config import settings
-
-# Database yaratish
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="University Navigation API", version="1.0.0")
 
@@ -32,6 +28,7 @@ app.include_router(floors.router, prefix="/api/floors", tags=["floors"])
 app.include_router(waypoints.router, prefix="/api/waypoints", tags=["waypoints"])
 app.include_router(navigation.router, prefix="/api/navigation", tags=["navigation"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
+app.include_router(kiosks.router, prefix="/api/kiosks", tags=["kiosks"])
 
 @app.get("/")
 def root():

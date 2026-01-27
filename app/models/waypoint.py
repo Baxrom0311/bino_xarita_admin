@@ -29,4 +29,4 @@ class Waypoint(Base):
                                    back_populates="from_waypoint", cascade="all, delete-orphan")
     connections_to = relationship("Connection", foreign_keys="Connection.to_waypoint_id",
                                  back_populates="to_waypoint", cascade="all, delete-orphan")
-
+    kiosks = relationship("Kiosk", back_populates="waypoint")

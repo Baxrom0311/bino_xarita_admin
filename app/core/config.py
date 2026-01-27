@@ -2,11 +2,12 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://baxrom:root@localhost/university_nav"
-    SECRET_KEY: str = "your-secret-key-here"
+    DATABASE_URL: str
+    SECRET_KEY: str
     UPLOAD_DIR: str = "uploads"
     
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
 
 settings = Settings()

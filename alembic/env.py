@@ -16,6 +16,7 @@ from app.models.floor import Floor
 from app.models.waypoint import Waypoint
 from app.models.connection import Connection
 from app.models.room import Room
+from app.models.kiosk import Kiosk
 from app.core.config import settings
 
 

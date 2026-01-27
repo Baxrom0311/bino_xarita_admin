@@ -5,12 +5,19 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app.models.waypoint import Waypoint
+from app.models.floor import Floor
 from app.models.connection import Connection
 from app.schemas.waypoint import Waypoint as WaypointSchema, WaypointCreate, WaypointUpdate
 from app.schemas.connection import Connection as ConnectionSchema, ConnectionCreate
 import uuid  # Fayl tepasiga qo'shing
 
 router = APIRouter()
+
+def _get_floor_or_404(db: Session, floor_id: int) -> Floor:
+    floor = db.query(Floor).filter(Floor.id == floor_id).first()
+    if not floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
+    return floor
 
 @router.get("/floor/{floor_id}", response_model=List[WaypointSchema])
 def get_waypoints_by_floor(floor_id: int, db: Session = Depends(get_db)):
@@ -29,6 +36,9 @@ def get_waypoint(waypoint_id: str, db: Session = Depends(get_db)):
 @router.post("/", response_model=WaypointSchema)
 def create_waypoint(waypoint: WaypointCreate, db: Session = Depends(get_db)):
     """Yangi nuqta yaratish"""
+    _get_floor_or_404(db, waypoint.floor_id)
+    if waypoint.connects_to_floor:
+        _get_floor_or_404(db, waypoint.connects_to_floor)
     db_waypoint = Waypoint(**waypoint.dict())
     db.add(db_waypoint)
     db.commit()
@@ -38,6 +48,12 @@ def create_waypoint(waypoint: WaypointCreate, db: Session = Depends(get_db)):
 @router.post("/batch", response_model=List[WaypointSchema])
 def create_waypoints_batch(waypoints: List[WaypointCreate], db: Session = Depends(get_db)):
     """Ko'p nuqtalarni bir vaqtda yaratish"""
+    floor_ids = {wp.floor_id for wp in waypoints}
+    for floor_id in floor_ids:
+        _get_floor_or_404(db, floor_id)
+    for wp in waypoints:
+        if wp.connects_to_floor:
+            _get_floor_or_404(db, wp.connects_to_floor)
     db_waypoints = [Waypoint(**wp.dict()) for wp in waypoints]
     db.add_all(db_waypoints)
     db.commit()
@@ -51,6 +67,8 @@ def update_waypoint(waypoint_id: str, waypoint: WaypointUpdate, db: Session = De
     db_waypoint = db.query(Waypoint).filter(Waypoint.id == waypoint_id).first()
     if not db_waypoint:
         raise HTTPException(status_code=404, detail="Waypoint not found")
+    if waypoint.connects_to_floor:
+        _get_floor_or_404(db, waypoint.connects_to_floor)
     
     for key, value in waypoint.dict(exclude_unset=True).items():
         setattr(db_waypoint, key, value)
@@ -88,7 +106,12 @@ def create_connection(connection: ConnectionCreate, db: Session = Depends(get_db
 @router.post("/connections/batch", response_model=List[ConnectionSchema])
 def create_connections_batch(connections: List[ConnectionCreate], db: Session = Depends(get_db)):
     """Ko'p bog'lanishlarni bir vaqtda yaratish"""
-    db_connections = [Connection(**conn.dict()) for conn in connections]
+    db_connections = []
+    for conn in connections:
+        conn_data = conn.dict()
+        if not conn_data.get('id'):
+            conn_data['id'] = str(uuid.uuid4())[:8]
+        db_connections.append(Connection(**conn_data))
     db.add_all(db_connections)
     db.commit()
     for conn in db_connections:

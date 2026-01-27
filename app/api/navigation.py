@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.pathfinding import PathFinder
 from app.schemas.navigation import NavigationRequest, NavigationResponse, PathStep
+from app.models.kiosk import Kiosk
 
 router = APIRouter()
 
@@ -18,21 +19,25 @@ def find_navigation_path(request: NavigationRequest, db: Session = Depends(get_d
     end_waypoint_id = request.end_waypoint_id
     
     # Agar room_id berilgan bo'lsa, waypoint ga o'tkazish
-    if request.start_room_id and not start_waypoint_id:
+    if request.start_room_id is not None and not start_waypoint_id:
         start_waypoint_id = pathfinder.find_nearest_waypoint_to_room(request.start_room_id)
         if not start_waypoint_id:
             raise HTTPException(status_code=404, detail="Start room not found or has no waypoint")
     
-    if request.end_room_id and not end_waypoint_id:
+    if request.end_room_id is not None and not end_waypoint_id:
         end_waypoint_id = pathfinder.find_nearest_waypoint_to_room(request.end_room_id)
         if not end_waypoint_id:
             raise HTTPException(status_code=404, detail="End room not found or has no waypoint")
     
     # Agar kiosk_id berilgan bo'lsa, kiosk ning waypoint ini ishlatish
     if request.kiosk_id and not start_waypoint_id:
-        # Bu yerda kiosk modelini qo'shish kerak
-        # Hozircha placeholder
-        pass
+        kiosk = db.query(Kiosk).filter(Kiosk.id == request.kiosk_id).first()
+        if kiosk and kiosk.waypoint_id:
+            start_waypoint_id = kiosk.waypoint_id
+        elif kiosk:
+            raise HTTPException(status_code=400, detail="Kiosk has no waypoint assigned")
+        else:
+            raise HTTPException(status_code=404, detail="Kiosk not found")
     
     if not start_waypoint_id or not end_waypoint_id:
         raise HTTPException(status_code=400, detail="Start and end waypoints required")

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.waypoint import Waypoint, WaypointType
 from app.models.connection import Connection
 from app.models.room import Room
+from app.models.floor import Floor
 
 class PathNode:
     """Yo'l topish uchun node struktura"""
@@ -202,7 +203,7 @@ class PathFinder:
         
         return path
     
-    def find_nearest_waypoint_to_room(self, room_id: str) -> Optional[str]:
+    def find_nearest_waypoint_to_room(self, room_id: int) -> Optional[str]:
         """Xonaga eng yaqin waypoint topish"""
         room = self.db.query(Room).filter(Room.id == room_id).first()
         if not room:
@@ -212,14 +213,37 @@ class PathFinder:
         if room.waypoint_id:
             return room.waypoint_id
         
-        # Aks holda, bir xil qavatdagi eng yaqin waypoint ni topish
-        waypoints = self.db.query(Waypoint).filter(
+        # Agar floor_id yo'q bo'lsa
+        if not room.floor_id:
+            return None
+        
+        # Bir xil qavatdagi ROOM waypointlarni olish
+        room_waypoints = self.db.query(Waypoint).filter(
             Waypoint.floor_id == room.floor_id,
             Waypoint.type == WaypointType.ROOM
         ).all()
-        
-        # Bu yerda mantiqiy topish kerak - hozircha birinchisini qaytaramiz
-        if waypoints:
-            return waypoints[0].id
-        
-        return None
+        if not room_waypoints:
+            return None
+
+        # Label bo'yicha aniq moslik bo'lsa, shuni ishlatamiz
+        room_label = (room.name or "").strip().lower()
+        label_matches = [
+            wp for wp in room_waypoints
+            if (wp.label or "").strip().lower() == room_label
+        ]
+        candidates = label_matches if label_matches else room_waypoints
+
+        # Xona koordinatasi yo'q bo'lgani uchun, floor markaziga eng yaqin waypointni olamiz
+        floor = self.db.query(Floor).filter(Floor.id == room.floor_id).first()
+        if floor and floor.image_width and floor.image_height:
+            target_x = floor.image_width / 2
+            target_y = floor.image_height / 2
+        else:
+            target_x = sum(wp.x for wp in candidates) / len(candidates)
+            target_y = sum(wp.y for wp in candidates) / len(candidates)
+
+        nearest = min(
+            candidates,
+            key=lambda wp: math.hypot(wp.x - target_x, wp.y - target_y)
+        )
+        return nearest.id

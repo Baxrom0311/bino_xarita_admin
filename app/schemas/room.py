@@ -1,12 +1,13 @@
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, conint
 from typing import Optional
-import re
+
+PositiveInt = conint(gt=0)
 
 class RoomBase(BaseModel):
     name: str
     waypoint_id: Optional[str] = None
-    floor_id: Optional[int] = None
+    floor_id: Optional[PositiveInt] = None
 
 class RoomCreate(RoomBase):
     pass  # ID avtomatik generatsiya qilinadi (Integer)
@@ -14,10 +15,10 @@ class RoomCreate(RoomBase):
 class RoomUpdate(BaseModel):
     name: Optional[str] = None
     waypoint_id: Optional[str] = None
-    floor_id: Optional[int] = None
+    floor_id: Optional[PositiveInt] = None
 
 class Room(RoomBase):
-    id: int  # ← Integer
+    id: PositiveInt  # ← Integer
     
     class Config:
         from_attributes = True

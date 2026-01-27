@@ -4,10 +4,6 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
-import uuid
-from sqlalchemy.dialects.postgresql import UUID
-
-id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
 
 class Room(Base):
     __tablename__ = "rooms"

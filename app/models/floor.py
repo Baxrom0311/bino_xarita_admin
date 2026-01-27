@@ -22,6 +22,6 @@ class Floor(Base):
                 cascade="all, delete-orphan"
                 )
     rooms = relationship("Room", back_populates="floor", cascade="all, delete-orphan")
-
+    kiosks = relationship("Kiosk", back_populates="floor", cascade="all, delete-orphan")
 
 

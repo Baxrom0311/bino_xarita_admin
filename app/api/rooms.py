@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
@@ -9,6 +9,12 @@ from app.schemas.room import Room as RoomSchema, RoomCreate, RoomUpdate
 from app.utils.room_parser import parse_room_name
 
 router = APIRouter()
+
+def _get_floor_or_404(db: Session, floor_id: int) -> Floor:
+    floor = db.query(Floor).filter(Floor.id == floor_id).first()
+    if not floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
+    return floor
 
 @router.get("/", response_model=List[RoomSchema])
 def get_rooms(
@@ -24,6 +30,7 @@ def get_rooms(
     
     # Qavat bo'yicha filter
     if floor_id:
+        _get_floor_or_404(db, floor_id)
         query = query.filter(Room.floor_id == floor_id)
     
     # Bino bo'yicha filter
@@ -46,12 +53,13 @@ def get_unassigned_rooms(
     query = db.query(Room).filter(Room.waypoint_id == None)
     
     if floor_id:
+        _get_floor_or_404(db, floor_id)
         query = query.filter(Room.floor_id == floor_id)
     
     return query.all()
 
 @router.get("/{room_id}", response_model=RoomSchema)
-def get_room(room_id: int, db: Session = Depends(get_db)):
+def get_room(room_id: int = Path(..., gt=0), db: Session = Depends(get_db)):
     """Bitta xonani olish"""
     room = db.query(Room).filter(Room.id == room_id).first()
     if not room:
@@ -73,6 +81,8 @@ def create_room(room: RoomCreate, db: Session = Depends(get_db)):
         ).first()
         if floor:
             floor_id = floor.id
+    if floor_id:
+        _get_floor_or_404(db, floor_id)
     
     db_room = Room(
         name=room.name,
@@ -85,7 +95,7 @@ def create_room(room: RoomCreate, db: Session = Depends(get_db)):
     return db_room
 
 @router.put("/{room_id}", response_model=RoomSchema)
-def update_room(room_id: int, room: RoomUpdate, db: Session = Depends(get_db)):
+def update_room(room: RoomUpdate, room_id: int = Path(..., gt=0), db: Session = Depends(get_db)):
     """Xonani yangilash"""
     db_room = db.query(Room).filter(Room.id == room_id).first()
     if not db_room:
@@ -102,6 +112,8 @@ def update_room(room_id: int, room: RoomUpdate, db: Session = Depends(get_db)):
             ).first()
             if floor:
                 update_data['floor_id'] = floor.id
+    if 'floor_id' in update_data and update_data['floor_id'] is not None:
+        _get_floor_or_404(db, update_data['floor_id'])
     
     for key, value in update_data.items():
         setattr(db_room, key, value)
@@ -112,8 +124,8 @@ def update_room(room_id: int, room: RoomUpdate, db: Session = Depends(get_db)):
 
 @router.patch("/{room_id}/assign-waypoint", response_model=RoomSchema)
 def assign_waypoint_to_room(
-    room_id: int,
-    waypoint_id: str,
+    room_id: int = Path(..., gt=0),
+    waypoint_id: str = Query(..., min_length=1),
     db: Session = Depends(get_db)
 ):
     """Xonaga waypoint biriktirish"""
@@ -127,21 +139,27 @@ def assign_waypoint_to_room(
     return room
 
 @router.get("/floor/{floor_id}", response_model=List[RoomSchema])
-def get_rooms_by_floor(floor_id: int, db: Session = Depends(get_db)):
+def get_rooms_by_floor(floor_id: int = Path(..., gt=0), db: Session = Depends(get_db)):
     """Qavat bo'yicha xonalarni olish"""
+    _get_floor_or_404(db, floor_id)
     rooms = db.query(Room).filter(Room.floor_id == floor_id).all()
     return rooms
 
 @router.get("/search", response_model=List[RoomSchema])
 def search_rooms(query: str, db: Session = Depends(get_db)):
     """Xonalarni qidirish"""
-    rooms = db.query(Room).filter(
-        (Room.id.ilike(f"%{query}%")) | (Room.name.ilike(f"%{query}%"))
-    ).all()
+    normalized = query.strip()
+    room_id = int(normalized) if normalized.isdigit() else None
+    if room_id is not None:
+        rooms = db.query(Room).filter(
+            (Room.id == room_id) | (Room.name.ilike(f"%{normalized}%"))
+        ).all()
+    else:
+        rooms = db.query(Room).filter(Room.name.ilike(f"%{normalized}%")).all()
     return rooms
 
 @router.delete("/{room_id}")
-def delete_room(room_id: int, db: Session = Depends(get_db)):
+def delete_room(room_id: int = Path(..., gt=0), db: Session = Depends(get_db)):
     """Xonani o'chirish"""
     room = db.query(Room).filter(Room.id == room_id).first()
     if not room:
@@ -180,76 +198,3 @@ def auto_assign_floors(db: Session = Depends(get_db)):
         "message": f"{updated_count} xonaga qavat biriktirildi",
         "updated_count": updated_count
     }
-
-
-
-
-# from fastapi import APIRouter, Depends, HTTPException
-# from sqlalchemy.orm import Session
-# from typing import List, Optional
-# from app.database import get_db
-# from app.models.room import Room
-# from pydantic import BaseModel
-
-# router = APIRouter()
-
-# class RoomBase(BaseModel):
-#     name: str
-#     capacity: Optional[int] = None
-#     building: Optional[str] = None
-#     waypoint_id: Optional[str] = None
-#     floor_id: int
-
-# class RoomCreate(RoomBase):
-#     id: str
-
-# class RoomSchema(RoomBase):
-#     id: str
-    
-#     class Config:
-#         from_attributes = True
-
-# @router.get("/", response_model=List[RoomSchema])
-# def get_rooms(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
-#     """Barcha xonalarni olish"""
-#     rooms = db.query(Room).offset(skip).limit(limit).all()
-#     return rooms
-
-
-# @router.get("/{room_id}", response_model=RoomSchema)
-# def get_room(room_id: str, db: Session = Depends(get_db)):
-#     """Bitta xonani olish"""
-#     room = db.query(Room).filter(Room.id == room_id).first()
-#     if not room:
-#         raise HTTPException(status_code=404, detail="Room not found")
-#     return room
-
-# @router.post("/", response_model=RoomSchema)
-# def create_room(room: RoomCreate, db: Session = Depends(get_db)):
-#     """Yangi xona yaratish"""
-#     db_room = Room(**room.dict())
-#     db.add(db_room)
-#     db.commit()
-#     db.refresh(db_room)
-#     return db_room
-
-# @router.post("/batch", response_model=List[RoomSchema])
-# def create_rooms_batch(rooms: List[RoomCreate], db: Session = Depends(get_db)):
-#     """Ko'p xonalarni bir vaqtda yaratish"""
-#     db_rooms = [Room(**room.dict()) for room in rooms]
-#     db.add_all(db_rooms)
-#     db.commit()
-#     for room in db_rooms:
-#         db.refresh(room)
-#     return db_rooms
-
-# @router.delete("/{room_id}")
-# def delete_room(room_id: str, db: Session = Depends(get_db)):
-#     """Xonani o'chirish"""
-#     db_room = db.query(Room).filter(Room.id == room_id).first()
-#     if not db_room:
-#         raise HTTPException(status_code=404, detail="Room not found")
-    
-#     db.delete(db_room)
-#     db.commit()
-#     return {"message": "Room deleted successfully"}

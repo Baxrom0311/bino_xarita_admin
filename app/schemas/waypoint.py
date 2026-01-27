@@ -1,33 +1,36 @@
 
 
 # app/schemas/waypoint.py
-from pydantic import BaseModel
+from pydantic import BaseModel, conint
 from typing import Optional
 from app.models.waypoint import WaypointType
 
+PositiveInt = conint(gt=0)
+NonNegativeInt = conint(ge=0)
+
 class WaypointBase(BaseModel):
-    x: int
-    y: int
+    x: NonNegativeInt
+    y: NonNegativeInt
     type: WaypointType
     label: Optional[str] = None
-    connects_to_floor: Optional[int] = None
+    connects_to_floor: Optional[PositiveInt] = None
     connects_to_waypoint: Optional[str] = None
 
 class WaypointCreate(WaypointBase):
     id: str
-    floor_id: int
+    floor_id: PositiveInt
 
 class WaypointUpdate(BaseModel):
-    x: Optional[int] = None
-    y: Optional[int] = None
+    x: Optional[NonNegativeInt] = None
+    y: Optional[NonNegativeInt] = None
     type: Optional[WaypointType] = None
     label: Optional[str] = None
-    connects_to_floor: Optional[int] = None
+    connects_to_floor: Optional[PositiveInt] = None
     connects_to_waypoint: Optional[str] = None
 
 class Waypoint(WaypointBase):
     id: str
-    floor_id: int
+    floor_id: PositiveInt
     
     class Config:
         from_attributes = True

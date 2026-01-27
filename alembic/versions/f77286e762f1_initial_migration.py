@@ -68,22 +68,6 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_rooms_id'), 'rooms', ['id'], unique=False)
-    op.add_column('rooms', sa.Column('waypoint_id', sa.String(50), nullable=True))
-    op.add_column('rooms', sa.Column('floor_id', sa.Integer(), nullable=True))
-    
-    # Foreign key constraint qo'shish
-    op.create_foreign_key(
-        'fk_rooms_waypoint',
-        'rooms', 'waypoints',
-        ['waypoint_id'], ['id'],
-        ondelete='SET NULL'
-    )
-    op.create_foreign_key(
-        'fk_rooms_floor',
-        'rooms', 'floors',
-        ['floor_id'], ['id'],
-        ondelete='SET NULL'
-    )
     # ### end Alembic commands ###
 
 
@@ -98,9 +82,4 @@ def downgrade() -> None:
     op.drop_table('waypoints')
     op.drop_index(op.f('ix_floors_id'), table_name='floors')
     op.drop_table('floors')
-    op.drop_constraint('fk_rooms_floor', 'rooms', type_='foreignkey')
-    op.drop_constraint('fk_rooms_waypoint', 'rooms', type_='foreignkey')
-    op.drop_column('rooms', 'floor_id')
-    op.drop_column('rooms', 'waypoint_id')
-
     # ### end Alembic commands ###
