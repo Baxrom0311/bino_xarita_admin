@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, cast
 import shutil
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.models.floor import Floor
 from app.schemas.floor import Floor as FloorSchema, FloorCreate, FloorUpdate
@@ -35,6 +35,8 @@ def create_floor(
 ):
     """Yangi qavat yaratish"""
     db_floor = Floor(**floor.model_dump())
+    if db_floor.created_at is None:
+        db_floor.created_at = datetime.now(timezone.utc)
     db.add(db_floor)
     db.commit()
     db.refresh(db_floor)
