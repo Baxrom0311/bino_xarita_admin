@@ -21,6 +21,12 @@ def _get_floor_or_404(db: Session, floor_id: int) -> Floor:
         raise HTTPException(status_code=404, detail="Floor not found")
     return floor
 
+def _get_waypoint_or_404(db: Session, waypoint_id: str) -> Waypoint:
+    waypoint = db.query(Waypoint).filter(Waypoint.id == waypoint_id).first()
+    if not waypoint:
+        raise HTTPException(status_code=404, detail="Waypoint not found")
+    return waypoint
+
 @router.get("/floor/{floor_id}", response_model=List[WaypointSchema])
 def get_waypoints_by_floor(floor_id: int, db: Session = Depends(get_db)):
     """Qavat bo'yicha nuqtalarni olish"""
@@ -115,6 +121,8 @@ def create_connection(
     _token: str = Depends(verify_admin_token)
 ):
     """Bog'lanish yaratish"""
+    _get_waypoint_or_404(db, connection.from_waypoint_id)
+    _get_waypoint_or_404(db, connection.to_waypoint_id)
     # Agar frontend ID yubormasa, o'zimiz yaratamiz
     connection_data = connection.model_dump()
     if not connection_data.get('id'):
@@ -133,6 +141,9 @@ def create_connections_batch(
     _token: str = Depends(verify_admin_token)
 ):
     """Ko'p bog'lanishlarni bir vaqtda yaratish"""
+    for conn in connections:
+        _get_waypoint_or_404(db, conn.from_waypoint_id)
+        _get_waypoint_or_404(db, conn.to_waypoint_id)
     db_connections = []
     for conn in connections:
         conn_data = conn.model_dump()

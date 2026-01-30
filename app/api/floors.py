@@ -127,9 +127,18 @@ async def upload_floor_image(
         shutil.copyfileobj(file.file, buffer)
     
     # Rasm o'lchamini olish
-    from PIL import Image
-    with Image.open(file_path) as img:
-        width, height = img.size
+    from PIL import Image, UnidentifiedImageError
+    try:
+        with Image.open(file_path) as img:
+            width, height = img.size
+    except UnidentifiedImageError:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail="Failed to process image")
     
     # Database yangilash
     db_floor.image_url = f"/uploads/{filename}" # type: ignore

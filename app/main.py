@@ -37,10 +37,10 @@ app = FastAPI(
 # CORS - configured origins only (no wildcard)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.production_origins_list,  # ✅ Single origin in production
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allow_headers=["Authorization", "Content-Type"],  # ✅ Explicit headers only
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Uploads papkani yaratish

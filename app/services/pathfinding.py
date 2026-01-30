@@ -1,7 +1,7 @@
 # app/services/pathfinding.py
 import heapq
 import math
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, cast
 from sqlalchemy.orm import Session
 from app.models.waypoint import Waypoint, WaypointType
 from app.models.connection import Connection
@@ -31,8 +31,8 @@ class PathFinder:
     
     def __init__(self, db: Session):
         self.db = db
-        self.graph = None
-        self.waypoints_dict = {}
+        self.graph: Optional[Dict[str, List[Tuple[str, float]]]] = None
+        self.waypoints_dict: Dict[str, Waypoint] = {}
     
     def build_graph(self):
         """Grafni qurish - barcha waypoints va connections"""
@@ -44,40 +44,56 @@ class PathFinder:
         connections = self.db.query(Connection).all()
         
         # Graph yaratish: {waypoint_id: [(neighbor_id, distance), ...]}
-        self.graph = {wp.id: [] for wp in waypoints}
-        self.waypoints_dict = {wp.id: wp for wp in waypoints}
+        self.graph = {cast(str, wp.id): [] for wp in waypoints}
+        self.waypoints_dict = {cast(str, wp.id): wp for wp in waypoints}
         
         # Bog'lanishlarni qo'shish (ikki tomonlama)
         for conn in connections:
-            self.graph[conn.from_waypoint_id].append((conn.to_waypoint_id, conn.distance))
-            self.graph[conn.to_waypoint_id].append((conn.from_waypoint_id, conn.distance))
+            from_id = cast(str, conn.from_waypoint_id)
+            to_id = cast(str, conn.to_waypoint_id)
+            if from_id not in self.graph or to_id not in self.graph:
+                # Skip invalid links to avoid KeyError
+                continue
+            self.graph[from_id].append((to_id, float(conn.distance)))
+            self.graph[to_id].append((from_id, float(conn.distance)))
         
         # Zinalar va liftlar uchun qavat o'tishlarini qo'shish
         for wp in waypoints:
             if wp.type in [WaypointType.STAIRS, WaypointType.ELEVATOR]:
-                if wp.connects_to_waypoint:
+                connects_to = cast(Optional[str], wp.connects_to_waypoint)
+                if connects_to:
+                    if connects_to not in self.graph:
+                        continue
                     # Qavat o'tish - qo'shimcha vaqt/masofa
                     floor_change_cost = 50 if wp.type == WaypointType.STAIRS else 30
-                    self.graph[wp.id].append((wp.connects_to_waypoint, floor_change_cost))
+                    wp_id = cast(str, wp.id)
+                    self.graph[wp_id].append((connects_to, floor_change_cost))
                     # Legacy linklarni ham ikki tomonlama deb hisoblaymiz
-                    if wp.connects_to_waypoint in self.graph:
-                        self.graph[wp.connects_to_waypoint].append((wp.id, floor_change_cost))
+                    if connects_to in self.graph:
+                        self.graph[connects_to].append((wp_id, floor_change_cost))
     
     def heuristic(self, wp1_id: str, wp2_id: str) -> float:
         """Heuristic funksiya - Euclidean distance + qavat o'zgarishi"""
         wp1 = self.waypoints_dict.get(wp1_id)
         wp2 = self.waypoints_dict.get(wp2_id)
         
-        if not wp1 or not wp2:
+        if wp1 is None or wp2 is None:
             return float('inf')
         
         # Bir xil qavatda bo'lsa - oddiy Euclidean distance
-        if wp1.floor_id == wp2.floor_id:
-            return math.sqrt((wp2.x - wp1.x)**2 + (wp2.y - wp1.y)**2)
+        wp1_floor = cast(int, wp1.floor_id)
+        wp2_floor = cast(int, wp2.floor_id)
+        wp1_x = cast(int, wp1.x)
+        wp1_y = cast(int, wp1.y)
+        wp2_x = cast(int, wp2.x)
+        wp2_y = cast(int, wp2.y)
+
+        if wp1_floor == wp2_floor:
+            return math.sqrt((wp2_x - wp1_x)**2 + (wp2_y - wp1_y)**2)
         
         # Turli qavatlarda bo'lsa - taxminiy masofa + qavat o'zgarishi
-        floor_diff = abs(wp2.floor_id - wp1.floor_id)
-        base_distance = math.sqrt((wp2.x - wp1.x)**2 + (wp2.y - wp1.y)**2)
+        floor_diff = abs(wp2_floor - wp1_floor)
+        base_distance = math.sqrt((wp2_x - wp1_x)**2 + (wp2_y - wp1_y)**2)
         return base_distance + (floor_diff * 100)  # Har bir qavat uchun 100 unit qo'shamiz
     
     def reconstruct_path(self, end_node: PathNode) -> List[Dict]:
@@ -93,7 +109,7 @@ class PathFinder:
                 'x': current.x,
                 'y': current.y,
                 'type': wp.type.value,
-                'label': wp.label
+                'label': cast(Optional[str], wp.label)
             })
             current = current.parent
         
@@ -114,17 +130,20 @@ class PathFinder:
             start_wp = self.waypoints_dict[start_id]
             return [{
                 'waypoint_id': start_id,
-                'floor_id': start_wp.floor_id,
-                'x': start_wp.x,
-                'y': start_wp.y,
+                'floor_id': cast(int, start_wp.floor_id),
+                'x': cast(int, start_wp.x),
+                'y': cast(int, start_wp.y),
                 'type': start_wp.type.value,
-                'label': start_wp.label
+                'label': cast(Optional[str], start_wp.label)
             }], 0.0
         
         # A* algoritmi
         start_wp = self.waypoints_dict[start_id]
         start_node = PathNode(
-            start_id, start_wp.floor_id, start_wp.x, start_wp.y,
+            start_id,
+            cast(int, start_wp.floor_id),
+            cast(int, start_wp.x),
+            cast(int, start_wp.y),
             g_score=0,
             f_score=self.heuristic(start_id, end_id)
         )
@@ -147,6 +166,8 @@ class PathFinder:
             
             # Qo'shnilarni tekshirish
             for neighbor_id, distance in self.graph[current.waypoint_id]:
+                if neighbor_id not in self.waypoints_dict:
+                    continue
                 if neighbor_id in closed_set:
                     continue
                 
@@ -158,8 +179,10 @@ class PathFinder:
                     f_score = tentative_g_score + self.heuristic(neighbor_id, end_id)
                     
                     neighbor_node = PathNode(
-                        neighbor_id, neighbor_wp.floor_id, 
-                        neighbor_wp.x, neighbor_wp.y,
+                        neighbor_id,
+                        cast(int, neighbor_wp.floor_id), 
+                        cast(int, neighbor_wp.x),
+                        cast(int, neighbor_wp.y),
                         g_score=tentative_g_score,
                         f_score=f_score,
                         parent=current
@@ -238,16 +261,18 @@ class PathFinder:
             return None
         
         # Agar xonaga waypoint biriktirilgan bo'lsa
-        if room.waypoint_id:
-            return room.waypoint_id
+        room_waypoint_id = cast(Optional[str], room.waypoint_id)
+        if room_waypoint_id:
+            return room_waypoint_id
         
         # Agar floor_id yo'q bo'lsa
-        if not room.floor_id:
+        room_floor_id = cast(Optional[int], room.floor_id)
+        if not room_floor_id:
             return None
         
         # Bir xil qavatdagi ROOM waypointlarni olish
         room_waypoints = self.db.query(Waypoint).filter(
-            Waypoint.floor_id == room.floor_id,
+            Waypoint.floor_id == room_floor_id,
             Waypoint.type == WaypointType.ROOM
         ).all()
         if not room_waypoints:
@@ -262,16 +287,18 @@ class PathFinder:
         candidates = label_matches if label_matches else room_waypoints
 
         # Xona koordinatasi yo'q bo'lgani uchun, floor markaziga eng yaqin waypointni olamiz
-        floor = self.db.query(Floor).filter(Floor.id == room.floor_id).first()
-        if floor and floor.image_width and floor.image_height:
-            target_x = floor.image_width / 2
-            target_y = floor.image_height / 2
+        floor = self.db.query(Floor).filter(Floor.id == room_floor_id).first()
+        floor_width = cast(Optional[int], floor.image_width) if floor else None
+        floor_height = cast(Optional[int], floor.image_height) if floor else None
+        if floor and floor_width and floor_height:
+            target_x = floor_width / 2
+            target_y = floor_height / 2
         else:
-            target_x = sum(wp.x for wp in candidates) / len(candidates)
-            target_y = sum(wp.y for wp in candidates) / len(candidates)
+            target_x = sum(cast(int, wp.x) for wp in candidates) / len(candidates)
+            target_y = sum(cast(int, wp.y) for wp in candidates) / len(candidates)
 
         nearest = min(
             candidates,
-            key=lambda wp: math.hypot(wp.x - target_x, wp.y - target_y)
+            key=lambda wp: math.hypot(cast(int, wp.x) - target_x, cast(int, wp.y) - target_y)
         )
-        return nearest.id
+        return cast(str, nearest.id)
