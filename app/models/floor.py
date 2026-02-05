@@ -22,7 +22,8 @@ class Floor(Base):
                 back_populates="floor", 
                 cascade="all, delete-orphan"
                 )
-    rooms = relationship("Room", back_populates="floor", cascade="all, delete-orphan")
+    # Rooms can exist without a floor (floor_id is nullable, ON DELETE SET NULL),
+    # so they must NOT be deleted when a floor is deleted.
+    rooms = relationship("Room", back_populates="floor", passive_deletes=True)
     kiosks = relationship("Kiosk", back_populates="floor", cascade="all, delete-orphan")
-
 

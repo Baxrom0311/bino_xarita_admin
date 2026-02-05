@@ -27,6 +27,23 @@ def _get_waypoint_or_404(db: Session, waypoint_id: str) -> Waypoint:
         raise HTTPException(status_code=404, detail="Waypoint not found")
     return waypoint
 
+def _normalize_pair(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+def _connection_exists(db: Session, a: str, b: str) -> bool:
+    """
+    Treat connections as undirected; disallow duplicates in either direction.
+    """
+    return (
+        db.query(Connection)
+        .filter(
+            (Connection.from_waypoint_id == a) & (Connection.to_waypoint_id == b)
+            | ((Connection.from_waypoint_id == b) & (Connection.to_waypoint_id == a))
+        )
+        .first()
+        is not None
+    )
+
 @router.get("/floor/{floor_id}", response_model=List[WaypointSchema])
 def get_waypoints_by_floor(floor_id: int, db: Session = Depends(get_db)):
     """Qavat bo'yicha nuqtalarni olish"""
@@ -121,8 +138,12 @@ def create_connection(
     _token: str = Depends(verify_admin_token)
 ):
     """Bog'lanish yaratish"""
+    if connection.from_waypoint_id == connection.to_waypoint_id:
+        raise HTTPException(status_code=400, detail="Connection endpoints must be different")
     _get_waypoint_or_404(db, connection.from_waypoint_id)
     _get_waypoint_or_404(db, connection.to_waypoint_id)
+    if _connection_exists(db, connection.from_waypoint_id, connection.to_waypoint_id):
+        raise HTTPException(status_code=409, detail="Connection already exists")
     # Agar frontend ID yubormasa, o'zimiz yaratamiz
     connection_data = connection.model_dump()
     if not connection_data.get('id'):
@@ -141,9 +162,18 @@ def create_connections_batch(
     _token: str = Depends(verify_admin_token)
 ):
     """Ko'p bog'lanishlarni bir vaqtda yaratish"""
+    seen_pairs: set[tuple[str, str]] = set()
     for conn in connections:
+        if conn.from_waypoint_id == conn.to_waypoint_id:
+            raise HTTPException(status_code=400, detail="Connection endpoints must be different")
         _get_waypoint_or_404(db, conn.from_waypoint_id)
         _get_waypoint_or_404(db, conn.to_waypoint_id)
+        pair = _normalize_pair(conn.from_waypoint_id, conn.to_waypoint_id)
+        if pair in seen_pairs:
+            raise HTTPException(status_code=400, detail="Duplicate connection in request")
+        seen_pairs.add(pair)
+        if _connection_exists(db, conn.from_waypoint_id, conn.to_waypoint_id):
+            raise HTTPException(status_code=409, detail="Connection already exists")
     db_connections = []
     for conn in connections:
         conn_data = conn.model_dump()

@@ -9,6 +9,11 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+    cpus: ${DB_CPUS:-2.0}
+    mem_limit: ${DB_MEM_LIMIT:-2048m}
+    mem_reservation: ${DB_MEM_RESERVATION:-512m}
+    pids_limit: ${DB_PIDS_LIMIT:-300}
+    shm_size: ${DB_SHM_SIZE:-512m}
     ports:
       - "${DB_PORT:-5432}:5432"
     restart: always
@@ -19,28 +24,52 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-20m}"
+        max-file: "${LOG_MAX_FILE:-5}"
 
   api:
     build: .
     command: gunicorn -c gunicorn_conf.py app.main:app
+    init: true
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./uploads:/app/uploads
+      # Provide runtime configuration without Compose parsing/interpolating bcrypt `$...`
+      - ./.env:/app/.env:ro
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Ensure the API container connects to the Postgres container (not localhost)
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      DB_HOST: db
+      DB_PORT: 5432
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+    cpus: ${API_CPUS:-2.0}
+    mem_limit: ${API_MEM_LIMIT:-2048m}
+    mem_reservation: ${API_MEM_RESERVATION:-512m}
+    pids_limit: ${API_PIDS_LIMIT:-400}
     depends_on:
       db:
         condition: service_healthy
     restart: always
+    stop_grace_period: 30s
     networks:
       - app_network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-20m}"
+        max-file: "${LOG_MAX_FILE:-5}"
 
   frontend:
     build:
@@ -54,11 +83,30 @@ services:
         VITE_STORAGE_KEY: ${FRONTEND_STORAGE_KEY:-change-this-to-random-string-in-production}
     ports:
       - "${FRONTEND_PORT:-8080}:80"
+    cpus: ${FRONTEND_CPUS:-0.5}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    mem_reservation: ${FRONTEND_MEM_RESERVATION:-64m}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-150}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: always
+    stop_grace_period: 20s
     networks:
       - app_network
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-20m}"
+        max-file: "${LOG_MAX_FILE:-5}"
 
 volumes:
   postgres_data:

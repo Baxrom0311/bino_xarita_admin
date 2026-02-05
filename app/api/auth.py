@@ -2,16 +2,20 @@
 """
 Authentication endpoints for login and token management
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+import secrets
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from datetime import timedelta
-from app.core.security import create_access_token, verify_password, get_password_hash
+from app.core.security import create_access_token, decode_access_token, verify_password, get_password_hash
 from app.core.config import settings
+from app.core.login_security import login_security
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+security = HTTPBearer()
 
 
 class LoginRequest(BaseModel):
@@ -27,19 +31,29 @@ class TokenResponse(BaseModel):
     expires_in: int  # seconds
 
 
-# Temporary in-memory users (replace with database)
-# In production, this should be in database with proper user management
-import os
-
 def get_admin_user():
-    """Load admin user from environment variables"""
-    username = os.getenv("ADMIN_USERNAME", "admin")
-    password_hash = os.getenv("ADMIN_PASSWORD_HASH")
+    """Load admin user from app settings"""
+    username = settings.ADMIN_USERNAME
+    password_hash = settings.ADMIN_PASSWORD_HASH
     
     if not password_hash:
-        # Fallback for development only - log warning
+        if settings.is_production:
+            logger.error("ADMIN_PASSWORD_HASH is not set; admin JWT login is disabled in production.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin login is not configured",
+            )
+
+        if not settings.DEBUG:
+            logger.error("ADMIN_PASSWORD_HASH is not set; admin JWT login is disabled (set DEBUG=true to allow insecure fallback).")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin login is not configured",
+            )
+
+        # Development-only fallback (insecure): keep the app usable locally.
         logger.warning(
-            "⚠️  ADMIN_PASSWORD_HASH not set in .env! Using insecure default. "
+            "⚠️  ADMIN_PASSWORD_HASH not set in .env! Using insecure default password for development. "
             "Run 'python scripts/create_admin.py' to create secure credentials."
         )
         password_hash = get_password_hash("admin123456")
@@ -50,13 +64,9 @@ def get_admin_user():
         "role": "admin"
     }
 
-TEMP_USERS = {
-    os.getenv("ADMIN_USERNAME", "admin"): get_admin_user()
-}
-
 
 @router.post("/login", response_model=TokenResponse)
-async def login(credentials: LoginRequest):
+async def login(credentials: LoginRequest, request: Request):
     """
     Login endpoint to get JWT access token
     
@@ -66,15 +76,26 @@ async def login(credentials: LoginRequest):
     - Add account lockout after failed attempts
     - Add 2FA support
     """
-    user = TEMP_USERS.get(credentials.username)
+    # Basic protections against brute-force / accidental abuse
+    login_security.check_rate_limit(request)
+    login_security.check_lockout(request, credentials.username)
+
+    user = get_admin_user()
     
-    if not user or not verify_password(credentials.password, user["hashed_password"]):
-        logger.warning(f"Failed login attempt for user: {credentials.username}")
+    if credentials.username != user["username"] or not verify_password(credentials.password, user["hashed_password"]):
+        login_security.register_failure(request, credentials.username)
+        logger.warning(
+            "admin_login_failed username=%s ip=%s user_agent=%s",
+            credentials.username,
+            request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown"),
+            request.headers.get("user-agent", "-"),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    login_security.register_success(request, credentials.username)
     
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -83,7 +104,12 @@ async def login(credentials: LoginRequest):
         expires_delta=access_token_expires
     )
     
-    logger.info(f"Successful login for user: {credentials.username}")
+    logger.info(
+        "admin_login_success username=%s ip=%s user_agent=%s",
+        credentials.username,
+        request.headers.get("x-forwarded-for") or (request.client.host if request.client else "unknown"),
+        request.headers.get("user-agent", "-"),
+    )
     
     return TokenResponse(
         access_token=access_token,
@@ -92,14 +118,44 @@ async def login(credentials: LoginRequest):
     )
 
 
-@router.post("/refresh")
-async def refresh_token():
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
     """
-    Refresh token endpoint (placeholder for future implementation)
-    
-    TODO: Implement refresh token mechanism
+    Refresh the current access token.
+
+    Notes:
+    - This is not a full refresh-token (rotating) implementation.
+    - It only refreshes a still-valid token.
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Refresh token not implemented yet"
+    token = credentials.credentials
+
+    # Transition helper: if legacy admin token is used, issue a JWT.
+    if secrets.compare_digest(token, settings.ADMIN_TOKEN):
+        user = get_admin_user()
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user["username"], "role": user["role"]},
+            expires_delta=access_token_expires,
+        )
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+
+    payload = decode_access_token(token)
+    if payload.get("role") != "admin" or not payload.get("sub"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": payload["sub"], "role": payload.get("role", "admin")},
+        expires_delta=access_token_expires,
+    )
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )

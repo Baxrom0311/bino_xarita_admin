@@ -55,9 +55,11 @@ ADMIN_PASSWORD_HASH="$2b$12$..."
 ## Fallback Behavior
 
 If `ADMIN_PASSWORD_HASH` is not set in `.env`:
-- Development: Falls back to insecure default password "admin123456"
-- Warning is logged on startup
-- **This is insecure and only for local development**
+- Production: Admin JWT login is disabled (HTTP 503)
+- Development:
+  - If `DEBUG=true`, falls back to insecure default password `"admin123456"`
+  - If `DEBUG=false`, admin JWT login is disabled (HTTP 503)
+- **The fallback is insecure and should be used only for local development**
 
 ## Production Deployment
 

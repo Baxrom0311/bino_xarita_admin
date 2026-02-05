@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
-from pydantic import field_validator, ValidationInfo, Field
+from pydantic import field_validator, ValidationInfo, Field, model_validator
 
 class Settings(BaseSettings):
     # Database Configuration
@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = Field(..., min_length=32)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Login security (in-memory, per-process)
+    LOGIN_RATE_LIMIT_PER_MINUTE: int = 10
+    LOGIN_MAX_FAILED_ATTEMPTS: int = 5
+    LOGIN_FAILURE_WINDOW_SECONDS: int = 15 * 60
+    LOGIN_LOCK_SECONDS: int = 5 * 60
     
     # Upload Configuration
     UPLOAD_DIR: str = "uploads"
@@ -40,7 +46,8 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> List[str]:
         """Parse comma-separated origins into list"""
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+        origins = [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+        return [origin for origin in origins if origin]
     
     @property
     def production_origins_list(self) -> List[str]:
@@ -57,7 +64,7 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         """Check if running in production"""
-        return self.ENV == "production"
+        return self.ENV.lower() == "production"
     
     @property
     def database_url_constructed(self) -> str:
@@ -83,7 +90,33 @@ class Settings(BaseSettings):
         if "SECRET_KEY" in info.data and v == info.data["SECRET_KEY"]:
             raise ValueError("JWT_SECRET_KEY must be different from SECRET_KEY")
         return v
-    
+
+    @model_validator(mode="after")
+    def validate_production_settings(self):
+        """
+        Fail fast on insecure defaults when ENV=production.
+        """
+        if not self.is_production:
+            return self
+
+        origins = self.allowed_origins_list
+        if not origins:
+            raise ValueError("ALLOWED_ORIGINS must be set in production")
+        if "*" in origins:
+            raise ValueError("ALLOWED_ORIGINS must not include '*' in production")
+
+        if self.ADMIN_TOKEN in {"change-me-in-production", "your-secure-admin-token-min-32-chars"}:
+            raise ValueError("ADMIN_TOKEN must be changed in production")
+        if len(self.ADMIN_TOKEN) < 32:
+            raise ValueError("ADMIN_TOKEN must be at least 32 characters long in production")
+
+        if self.SECRET_KEY == "your-secret-key-min-32-chars-change-in-production":
+            raise ValueError("SECRET_KEY must be changed in production")
+        if self.JWT_SECRET_KEY == "your-jwt-secret-key-min-32-chars-different-from-SECRET_KEY":
+            raise ValueError("JWT_SECRET_KEY must be changed in production")
+
+        return self
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

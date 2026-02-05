@@ -37,7 +37,9 @@ def get_rooms(
     
     # Bino bo'yicha filter
     if building:
-        query = query.filter(Room.name.contains(f"-{building} blok"))
+        b = building.strip()
+        if b:
+            query = query.filter(Room.name.ilike(f"%-{b}% blok%"))
     
     # Nuqtasi yo'q xonalar
     if without_waypoint:
@@ -93,6 +95,14 @@ def create_room(
     
     # Agar floor_id berilmagan bo'lsa, parse dan olish
     floor_id = room.floor_id
+    if room.waypoint_id:
+        waypoint = db.query(Waypoint).filter(Waypoint.id == room.waypoint_id).first()
+        if not waypoint:
+            raise HTTPException(status_code=404, detail="Waypoint not found")
+        if floor_id and waypoint.floor_id != floor_id:
+            raise HTTPException(status_code=400, detail="Waypoint does not belong to the room floor")
+        if floor_id is None:
+            floor_id = waypoint.floor_id
     if not floor_id and parsed['floor_number']:
         # Floor_number ga mos keladigan qavatni topish
         floor = db.query(Floor).filter(

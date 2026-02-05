@@ -8,17 +8,23 @@ def parse_room_name(room_name: str) -> Dict[str, Optional[str]]:
     Format: {qavat}{xona}-{blok}
     Misol: "106-B blok" → {floor: "1", room: "06", building: "B"}
     """
-    # Pattern: 3 raqam (qavat + xona) - harf (blok)
-    pattern = r'^(\d)(\d{2})-([A-Z])\s*blok$'
-    match = re.match(pattern, room_name)
+    # Accept:
+    # - Any floor number length (>=1) + 2-digit room number => total digits >= 3
+    # - Block letter case-insensitive
+    # Examples:
+    # - "106-B blok" => floor 1, room 06
+    # - "1006-b blok" => floor 10, room 06
+    pattern = r'^\s*(\d{3,})\s*-\s*([A-Za-z])\s*(?:blok|block)\s*$'
+    match = re.match(pattern, room_name.strip(), flags=re.IGNORECASE)
     
     if match:
-        floor_num = match.group(1)
-        room_num = match.group(2)
-        building = match.group(3)
+        full_number = match.group(1)
+        floor_num = full_number[:-2]
+        room_num = full_number[-2:]
+        building = match.group(2).upper()
         
         return {
-            'floor_number': int(floor_num),
+            'floor_number': int(floor_num) if floor_num.isdigit() else None,
             'room_number': room_num,
             'building': building,
             'floor_name': f"{floor_num}-qavat",
@@ -38,4 +44,4 @@ def format_room_name(floor_number: int, room_number: str, building: str) -> str:
     Xona nomini format qilish
     Misol: (1, "06", "B") → "106-B blok"
     """
-    return f"{floor_number}{room_number}-{building} blok"
+    return f"{floor_number}{room_number}-{building.upper()} blok"

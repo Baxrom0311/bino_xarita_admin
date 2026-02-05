@@ -33,11 +33,18 @@ class PathFinder:
         self.db = db
         self.graph: Optional[Dict[str, List[Tuple[str, float]]]] = None
         self.waypoints_dict: Dict[str, Waypoint] = {}
-    
+        self.floor_number_by_id: Dict[int, int] = {}
+
     def build_graph(self):
         """Grafni qurish - barcha waypoints va connections"""
         if self.graph is not None:
             return
+
+        # Floor order should be based on floor_number (not DB primary key).
+        self.floor_number_by_id = {
+            cast(int, fid): cast(int, fnum)
+            for fid, fnum in self.db.query(Floor.id, Floor.floor_number).all()
+        }
         
         # Barcha waypoints va connections ni olish
         waypoints = self.db.query(Waypoint).all()
@@ -71,6 +78,13 @@ class PathFinder:
                     # Legacy linklarni ham ikki tomonlama deb hisoblaymiz
                     if connects_to in self.graph:
                         self.graph[connects_to].append((wp_id, floor_change_cost))
+
+    def _floor_number(self, floor_id: int) -> int:
+        """
+        Return a stable 'vertical order' for floors.
+        Prefer Floor.floor_number; fallback to floor_id for safety.
+        """
+        return self.floor_number_by_id.get(floor_id, floor_id)
     
     def heuristic(self, wp1_id: str, wp2_id: str) -> float:
         """Heuristic funksiya - Euclidean distance + qavat o'zgarishi"""
@@ -92,7 +106,7 @@ class PathFinder:
             return math.sqrt((wp2_x - wp1_x)**2 + (wp2_y - wp1_y)**2)
         
         # Turli qavatlarda bo'lsa - taxminiy masofa + qavat o'zgarishi
-        floor_diff = abs(wp2_floor - wp1_floor)
+        floor_diff = abs(self._floor_number(wp2_floor) - self._floor_number(wp1_floor))
         base_distance = math.sqrt((wp2_x - wp1_x)**2 + (wp2_y - wp1_y)**2)
         return base_distance + (floor_diff * 100)  # Har bir qavat uchun 100 unit qo'shamiz
     
@@ -209,7 +223,11 @@ class PathFinder:
 
             # Qavat o'zgarishi: zinaga/liftga yetganda oldindan ko'rsatma berish
             if step['type'] in ['stairs', 'elevator'] and next_step['floor_id'] != step['floor_id']:
-                direction = "yuqoriga" if next_step['floor_id'] > step['floor_id'] else "pastga"
+                direction = (
+                    "yuqoriga"
+                    if self._floor_number(next_step['floor_id']) > self._floor_number(step['floor_id'])
+                    else "pastga"
+                )
                 if step['type'] == 'stairs':
                     step['instruction'] = f"Zina orqali {direction} chiqing"
                 else:

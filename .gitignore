@@ -29,6 +29,9 @@ app/**/__pycache__/
 .env
 .env.local
 .env.*.local
+.env.compose
+.env.prod.compose
+.env.*
 
 # Frontend
 node_modules/
@@ -45,3 +48,8 @@ Thumbs.db
 
 # Keep example env files
 !.env.example
+!.env.compose.example
+!.env.prod.compose.example
+
+# Backups
+backups/

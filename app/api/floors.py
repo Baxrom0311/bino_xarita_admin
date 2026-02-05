@@ -4,14 +4,32 @@ from sqlalchemy.orm import Session
 from typing import List, cast
 import shutil
 import os
+import logging
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models.floor import Floor
+from app.models.room import Room
+from app.models.waypoint import Waypoint
 from app.schemas.floor import Floor as FloorSchema, FloorCreate, FloorUpdate
 from app.core.config import settings
 from app.core.auth import verify_admin_token  # ✅ Admin auth
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _safe_unlink_upload_file(filename: str) -> None:
+    """
+    Best-effort deletion of a file under UPLOAD_DIR.
+    Prevents path traversal by validating realpath containment.
+    """
+    upload_dir = os.path.realpath(settings.UPLOAD_DIR)
+    candidate = os.path.realpath(os.path.join(settings.UPLOAD_DIR, filename))
+    if not (candidate == upload_dir or candidate.startswith(upload_dir + os.sep)):
+        logger.warning("Refusing to delete non-upload path: %s", candidate)
+        return
+    if os.path.exists(candidate):
+        os.remove(candidate)
 
 @router.get("/", response_model=List[FloorSchema])
 def get_floors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -71,6 +89,19 @@ def delete_floor(
     db_floor = db.query(Floor).filter(Floor.id == floor_id).first()
     if not db_floor:
         raise HTTPException(status_code=404, detail="Floor not found")
+
+    # Detach rooms first (rooms should survive floor deletion)
+    # - Null out floor_id for rooms on this floor
+    # - Also null out waypoint_id, since floor waypoints will be deleted
+    db.query(Room).filter(Room.floor_id == floor_id).update(
+        {Room.floor_id: None, Room.waypoint_id: None},
+        synchronize_session=False,
+    )
+    floor_waypoint_ids = db.query(Waypoint.id).filter(Waypoint.floor_id == floor_id)
+    db.query(Room).filter(Room.waypoint_id.in_(floor_waypoint_ids)).update(
+        {Room.waypoint_id: None},
+        synchronize_session=False,
+    )
     
     # Rasmni o'chirish
     if db_floor.image_url is not None:
@@ -116,8 +147,18 @@ async def upload_floor_image(
     
     original_filename = file.filename or "image.jpg"
 
+    old_image_filename: str | None = None
+    if db_floor.image_url:
+        try:
+            old_basename = os.path.basename(str(db_floor.image_url))
+            if old_basename:
+                old_image_filename = old_basename
+        except Exception:
+            old_image_filename = None
+
     # Fayl nomini yaratish
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Use microseconds to avoid collisions on quick successive uploads
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     file_extension = os.path.splitext(original_filename)[1]
     filename = f"floor_{floor_id}_{timestamp}{file_extension}"
     file_path = os.path.join(settings.UPLOAD_DIR, filename)
@@ -146,5 +187,12 @@ async def upload_floor_image(
     db_floor.image_height = height # type: ignore
     db.commit()
     db.refresh(db_floor)
+
+    # Best-effort: delete previous image after successfully saving and updating DB
+    if old_image_filename and old_image_filename != filename:
+        try:
+            _safe_unlink_upload_file(old_image_filename)
+        except Exception as e:
+            logger.warning("Failed to delete old floor image '%s': %s", old_image_filename, e)
     
     return {"image_url": db_floor.image_url, "width": width, "height": height}

@@ -1,43 +1,81 @@
 # docker-compose.yml - Development Configuration
-version: '3.8'
 
 services:
   db:
     image: postgis/postgis:15-3.3
+    platform: linux/amd64
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-university_nav}
+      # Keep dev defaults stable to avoid auth errors when volumes persist
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: university_nav
+    cpus: ${DB_CPUS:-1.0}
+    mem_limit: ${DB_MEM_LIMIT:-1024m}
+    mem_reservation: ${DB_MEM_RESERVATION:-256m}
+    pids_limit: ${DB_PIDS_LIMIT:-200}
+    shm_size: ${DB_SHM_SIZE:-256m}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}" ]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
 
   api:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    # Dev: run as root to avoid permission issues with bind-mounted source on macOS/Windows
+    user: root
     volumes:
       - .:/app
       - ./uploads:/app/uploads
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Ensure the API container connects to the Postgres container (not localhost)
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/university_nav
+      DB_HOST: db
+      DB_PORT: 5432
+    cpus: ${API_CPUS:-1.5}
+    mem_limit: ${API_MEM_LIMIT:-1024m}
+    mem_reservation: ${API_MEM_RESERVATION:-256m}
+    pids_limit: ${API_PIDS_LIMIT:-300}
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
 
   frontend:
     build:
       context: ../frontend_version2
       target: dev
     command: npm run dev -- --host 0.0.0.0 --port 8080
+    init: true
+    security_opt:
+      - no-new-privileges:true
     environment:
       VITE_API_URL: ${FRONTEND_API_URL:-http://localhost:8000}
       VITE_APP_NAME: ${FRONTEND_APP_NAME:-Universitet Navigatsiya Tizimi}
@@ -48,10 +86,27 @@ services:
       - ../frontend_version2:/app
       - /app/node_modules
     ports:
-      - "8080:8080"
+      - "${FRONTEND_PORT:-8080}:8080"
+    cpus: ${FRONTEND_CPUS:-1.0}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-768m}
+    mem_reservation: ${FRONTEND_MEM_RESERVATION:-128m}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-250}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://127.0.0.1:8080/" ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
 
 volumes:
   postgres_data:
