@@ -10,7 +10,7 @@
 ENV_FILE ?= .env
 
 # Docker Compose with env file
-COMPOSE = docker-compose --env-file $(ENV_FILE)
+COMPOSE = docker compose --env-file $(ENV_FILE)
 
 # ========================
 # DEVELOPMENT
