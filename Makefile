@@ -33,7 +33,7 @@ prod:
 	API_COMMAND="gunicorn -c gunicorn_conf.py app.main:app" \
 	API_USER="app" \
 	FRONTEND_TARGET="prod" \
-	FRONTEND_COMMAND="" \
+	FRONTEND_COMMAND='nginx -g "daemon off;"' \
 	FRONTEND_INTERNAL_PORT="80" \
 	$(COMPOSE) up --build -d
 
