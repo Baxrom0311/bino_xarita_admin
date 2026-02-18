@@ -53,7 +53,10 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     networks:
-      - stack_map_network
+      stack_map_network:
+        aliases:
+          - api
+          - map_backend
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).read()" ]
       interval: 15s
@@ -74,4 +77,3 @@ networks:
   stack_map_network:
     external: true
     driver: bridge
-
