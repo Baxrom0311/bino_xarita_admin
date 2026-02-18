@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     
     # CORS Configuration
     ALLOWED_ORIGINS: str = "*"
+    ALLOWED_ORIGIN_REGEX: Optional[str] = None
     
     # Environment
     ENV: str = "development"
@@ -53,7 +54,24 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> List[str]:
         """Parse comma-separated origins into list"""
         origins = [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
-        return [origin for origin in origins if origin]
+        normalized: List[str] = []
+        seen = set()
+        for origin in origins:
+            if not origin:
+                continue
+            if origin == "*":
+                return ["*"]
+            # CORS Origin header does not include trailing slash.
+            clean_origin = origin.rstrip("/")
+            if clean_origin and clean_origin not in seen:
+                seen.add(clean_origin)
+                normalized.append(clean_origin)
+        return normalized
+
+    @property
+    def allowed_origin_regex(self) -> Optional[str]:
+        value = (self.ALLOWED_ORIGIN_REGEX or "").strip()
+        return value or None
     
     @property
     def production_origins_list(self) -> List[str]:
@@ -106,10 +124,8 @@ class Settings(BaseSettings):
             return self
 
         origins = self.allowed_origins_list
-        if not origins:
-            raise ValueError("ALLOWED_ORIGINS must be set in production")
-        if "*" in origins:
-            raise ValueError("ALLOWED_ORIGINS must not include '*' in production")
+        if not origins and not self.allowed_origin_regex:
+            raise ValueError("Set ALLOWED_ORIGINS and/or ALLOWED_ORIGIN_REGEX in production")
 
         if self.ADMIN_TOKEN in {"change-me-in-production", "your-secure-admin-token-min-32-chars"}:
             raise ValueError("ADMIN_TOKEN must be changed in production")

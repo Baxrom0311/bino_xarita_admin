@@ -24,7 +24,8 @@ cp .env.example .env
 - `SECRET_KEY` (kamida 32 belgi)
 - `JWT_SECRET_KEY` (kamida 32 belgi, `SECRET_KEY` dan farqli)
 - `ADMIN_TOKEN` (kamida 32 belgi)
-- `ALLOWED_ORIGINS` (prod'da `*` bo'lmasin)
+- `ALLOWED_ORIGINS` (`*` bo'lsa hamma origin ruxsat etiladi; yoki aniq domenlar ro'yxati)
+- ixtiyoriy: `ALLOWED_ORIGIN_REGEX` (preview branch domenlari uchun)
 - `ENV=production`
 
 ### 2) Frontend nomi
@@ -138,4 +139,3 @@ docker compose exec -T api curl -s http://localhost:8000/api/health
 ```bash
 docker compose down -v
 ```
-
