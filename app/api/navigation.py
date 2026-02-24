@@ -204,6 +204,7 @@ def audit_map(db: Session = Depends(get_db), _token: str = Depends(verify_admin_
             {
                 "component_id": len(components) + 1,
                 "waypoint_count": len(comp_nodes),
+                "waypoint_ids": comp_nodes,
                 "floor_ids": comp_floor_ids,
                 "floor_numbers": comp_floor_numbers,
             }
@@ -246,6 +247,48 @@ def audit_map(db: Session = Depends(get_db), _token: str = Depends(verify_admin_
                 }
             )
 
+    unattached_waypoints: List[Dict[str, Any]] = []
+    vertical_connections: List[Dict[str, Any]] = []
+    seen_vertical = set()
+    
+    for wp in waypoints:
+        if len(adjacency.get(wp.id, set())) == 0:
+            unattached_waypoints.append({
+                "waypoint_id": wp.id,
+                "label": wp.label,
+                "type": wp.type.value,
+                "floor": floor_info(wp.floor_id),
+            })
+            
+        if wp.type in (WaypointType.STAIRS, WaypointType.ELEVATOR):
+            if wp.connects_to_waypoint:
+                target = wp_by_id.get(wp.connects_to_waypoint)
+                if target:
+                    pair = tuple(sorted([wp.id, target.id]))
+                    if pair not in seen_vertical:
+                        vertical_connections.append({
+                            "from_id": wp.id,
+                            "from_floor": floor_info(wp.floor_id),
+                            "to_id": target.id,
+                            "to_floor": floor_info(target.floor_id),
+                            "type": wp.type.value
+                        })
+                        seen_vertical.add(pair)
+            
+            for other_id in connections_by_wp.get(wp.id, set()):
+                other = wp_by_id.get(other_id)
+                if other and other.floor_id != wp.floor_id:
+                    pair = tuple(sorted([wp.id, other.id]))
+                    if pair not in seen_vertical:
+                        vertical_connections.append({
+                            "from_id": wp.id,
+                            "from_floor": floor_info(wp.floor_id),
+                            "to_id": other.id,
+                            "to_floor": floor_info(other.floor_id),
+                            "type": wp.type.value
+                        })
+                        seen_vertical.add(pair)
+
     return {
         "summary": {
             "floors": len(floors),
@@ -256,11 +299,48 @@ def audit_map(db: Session = Depends(get_db), _token: str = Depends(verify_admin_
             "floors_with_no_waypoints": floors_with_no_waypoints,
             "legacy_one_way_links": len(legacy_one_way_links),
             "stairs_without_vertical_links": len(stairs_without_vertical_links),
+            "unattached_waypoints": len(unattached_waypoints),
+            "vertical_connections": len(vertical_connections),
         },
         "components": components,
+        "vertical_connections": vertical_connections,
+        "unattached_waypoints": unattached_waypoints,
         "issues": {
             "legacy_one_way_links": legacy_one_way_links,
             "stairs_without_vertical_links": stairs_without_vertical_links,
             "missing_waypoints_in_connections": missing_waypoints_in_connections,
         },
     }
+@router.get("/debug/graph")
+def get_debug_graph(db: Session = Depends(get_db)):
+    """GraphCache holatini tahlil qilish uchun yopiq/debug endpoint"""
+    pf = PathFinder(db)
+    
+    # Generic vertical connections count
+    multi_floor_edges = 0
+    for node_id, edges in pf.graph.items():
+        node_wp = pf.waypoints_dict.get(node_id)
+        if not node_wp: continue
+        
+        for edge_target, _ in edges:
+            target_wp = pf.waypoints_dict.get(edge_target)
+            if target_wp and target_wp.floor_id != node_wp.floor_id:
+                multi_floor_edges += 1
+                
+    # Barcha connections tabledagi qavatlararo ulanishlarni hisoblash
+    conns = db.query(Connection).all()
+    v_conns_db = []
+    for c in conns:
+        w1 = pf.waypoints_dict.get(c.from_waypoint_id)
+        w2 = pf.waypoints_dict.get(c.to_waypoint_id)
+        if w1 and w2 and w1.floor_id != w2.floor_id:
+            v_conns_db.append(c.id)
+            
+    return {
+        "is_initialized": pf.cache.initialized,
+        "total_nodes_in_cache": len(pf.graph),
+        "total_edges_in_graph": sum(len(edges) for edges in pf.graph.values()),
+        "multi_floor_edges_in_cache": multi_floor_edges,
+        "multi_floor_edges_in_db": len(v_conns_db),
+    }
+
